@@ -230,15 +230,31 @@ verdade o padrão de 3s é melhor.
 | `{"lote":"001","valor":"2000"}` | só o lance muda |
 | `{"lote":"001","valor":"2000","obs":"Reagrupado"}` | observação do overlay, com selo "informado na transmissão" |
 | `{"lote":"001","valor":"2000"}` | a observação **sai** — o payload é a tela inteira, não um acréscimo |
+| `{"lote":"001","qtd_animais":"25","sexo":"F","peso":"410"}` | sobrescreve quantidade, sexo e peso **de um lote do catálogo** |
 | `{"lote":"9999","valor":"3200","qtd_animais":"7","sexo":"F","raca":"Girolando"}` | lote fora do catálogo, montado só com o que você digitou |
 | `{}` (ou apague o arquivo) | pista liberada, volta para "Aguardando próximo lote" |
 
-Campos aceitos: `lote` (obrigatório), `valor`, `qtd_animais`, `raca`, `sexo`
-(`"M"`/`"F"`), `idade`, `peso`, `obs`. **Todos em texto, entre aspas**, inclusive
-os numéricos.
+Campos aceitos: `lote` (obrigatório), `valor`, `qtd_animais`, `raca`, `sexo`,
+`idade`, `peso`, `obs`. **Todos funcionam em qualquer lote** — tanto para corrigir
+um do catálogo quanto para montar um que não existe.
 
 Deixar um campo de fora ou em branco é a mesma coisa: aquele dado volta a vir do
 catálogo. É assim que o operador desfaz algo digitado por engano.
+
+### Você pode escrever como aparece na tela
+
+O agente lê o texto **renderizado** no overlay, então ele aceita o que o operador
+realmente digita, não códigos:
+
+| Você escreve | O sistema entende |
+|---|---|
+| `"sexo": "MACHOS"` · `"Fêmeas"` · `"m"` | `M` / `F` |
+| `"qtd_animais": "25 cabeças"` · `"25"` · `25` | 25 |
+| `"peso": "410 kg"` · `"410 KGS"` · `"410"` | 410 (a página escreve o "kg") |
+
+**Um campo que o sistema não entende é descartado sozinho, e o resto do envio
+continua valendo** — aquele dado volta a vir do catálogo. Um `"sexo": "indefinido"`
+não derruba o lance nem o número do lote.
 
 ### Apontando para o seu Django local
 

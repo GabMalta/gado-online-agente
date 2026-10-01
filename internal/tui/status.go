@@ -23,6 +23,10 @@ type Status struct {
 	Leilao  string
 
 	linhasAnteriores int
+
+	// Usado so quando o console nao suporta ANSI: evita reimprimir o painel
+	// identico a cada ciclo.
+	ultimoResumo string
 }
 
 const largura = 56
@@ -30,8 +34,19 @@ const largura = 56
 func (s *Status) Desenhar(sit laco.Situacao) {
 	var b strings.Builder
 
-	// Sobe o cursor e limpa o que foi desenhado antes.
-	if s.linhasAnteriores > 0 {
+	// Sobe o cursor e limpa o que foi desenhado antes. Sem suporte a ANSI
+	// (conhost.exe classico com VT desligado), redesenhar em lugar e'
+	// impossivel: o painel passa a sair uma vez por mudanca, em vez de a cada
+	// ciclo, para nao inundar o console.
+	emLugar := suportaAnsi()
+
+	if !emLugar {
+		resumo := s.resumir(sit)
+		if resumo == s.ultimoResumo {
+			return
+		}
+		s.ultimoResumo = resumo
+	} else if s.linhasAnteriores > 0 {
 		fmt.Fprintf(&b, "\033[%dA\033[J", s.linhasAnteriores)
 	}
 
@@ -59,8 +74,24 @@ func (s *Status) Desenhar(sit laco.Situacao) {
 		escrever("  %s", vermelho("✗  "+sit.Erro))
 	}
 
-	s.linhasAnteriores = linhas
+	if emLugar {
+		s.linhasAnteriores = linhas
+	}
 	_, _ = io.WriteString(s.Saida, b.String())
+}
+
+// resumir reduz a situacao ao que, mudando, merece reimprimir o painel.
+func (s *Status) resumir(sit laco.Situacao) string {
+	campos := make([]string, 0, len(sit.Estado.Overrides))
+	for _, campo := range ordemOverrides {
+		if _, tem := sit.Estado.Overrides[campo]; tem {
+			campos = append(campos, campo)
+		}
+	}
+
+	return fmt.Sprintf("%t|%t|%s|%s|%s|%s",
+		sit.FonteOK, sit.ServidorOK, sit.Estado.Lote, sit.Estado.Valor,
+		strings.Join(campos, ","), sit.Erro)
 }
 
 func linhaDoLote(sit laco.Situacao) string {

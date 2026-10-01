@@ -56,26 +56,41 @@ func Caminho() (string, error) {
 	return filepath.Join(base, pastaApp, nomeArq), nil
 }
 
-// Carregar le a config do disco. Devolve ErrSemConfig na primeira execucao.
+// Padrao e' a config de primeira execucao, com os defaults ja aplicados.
+//
+// Existe porque devolver `Config{}` cru junto com o erro deixava `URLBase`
+// vazia, e o agente tentava `GET /api/transmissao/leilao` sem host --
+// "unsupported protocol scheme". Quem recebe um erro daqui tem que receber
+// uma config utilizavel junto.
+func Padrao() Config {
+	var cfg Config
+	cfg.aplicarPadroes()
+	return cfg
+}
+
+// Carregar le a config do disco.
+//
+// Devolve ErrSemConfig na primeira execucao -- e nesse caso devolve tambem a
+// config padrao, nao a zerada.
 func Carregar() (Config, error) {
 	caminho, err := Caminho()
 	if err != nil {
-		return Config{}, err
+		return Padrao(), err
 	}
 
 	bruto, err := os.ReadFile(caminho)
 	if errors.Is(err, os.ErrNotExist) {
-		return Config{}, ErrSemConfig
+		return Padrao(), ErrSemConfig
 	}
 	if err != nil {
-		return Config{}, err
+		return Padrao(), err
 	}
 
 	var cfg Config
 	if err := json.Unmarshal(bruto, &cfg); err != nil {
 		// Arquivo corrompido nao pode travar o agente as 19h de um sabado:
 		// trata como primeira execucao e pede a chave de novo.
-		return Config{}, ErrSemConfig
+		return Padrao(), ErrSemConfig
 	}
 
 	cfg.aplicarPadroes()

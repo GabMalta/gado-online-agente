@@ -334,3 +334,41 @@ func TestServidorForaDoArNaAberturaInsisteEnaoDesiste(t *testing.T) {
 		t.Errorf("nao avisou que estava tentando. Saida:\n%s", saida.String())
 	}
 }
+
+// TestResolverComConfigPadraoNaoMontaURLVazia e' a contraparte no prompt do bug
+// da URL vazia: o cliente tem que receber um host, nao "".
+func TestResolverComConfigPadraoNaoMontaURLVazia(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("AppData", dir)
+
+	var urlRecebida string
+	c := &clienteFalso{porChave: map[string]backend.Leilao{
+		"k": {Nome: "LEILAO DE HOJE", DataLeilao: "2026-10-01"},
+	}}
+
+	hoje, _ := time.Parse("2006-01-02", "2026-10-01")
+	var saida strings.Builder
+	p := &Prompt{
+		Entrada: strings.NewReader("k\n\n"),
+		Saida:   &saida,
+		NovoCliente: func(urlBase, chave string) ClienteLeilao {
+			urlRecebida = urlBase
+			return c.para(chave)
+		},
+		Hoje: func() time.Time { return hoje },
+	}
+
+	// Exatamente o que o main faz na primeira execucao.
+	cfg, _ := config.Carregar()
+
+	if _, _, err := p.Resolver(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if urlRecebida == "" {
+		t.Fatal("o cliente recebeu URL vazia — e' o bug do unsupported protocol scheme")
+	}
+	if !strings.HasPrefix(urlRecebida, "http") {
+		t.Errorf("URL sem esquema: %q", urlRecebida)
+	}
+}

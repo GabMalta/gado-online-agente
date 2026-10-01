@@ -215,7 +215,9 @@ Protocolo e decisões de arquitetura:
 
 Dependências: só `gorilla/websocket`, usada pelo adaptador do OBS. Todo o resto é
 biblioteca padrão — em binário que vai para a máquina do cliente, cada dependência
-é superfície.
+é superfície. Inclusive as cores do console: o Virtual Terminal Processing do
+Windows é ligado via `kernel32` por `syscall`, e quando não dá, o painel sai sem
+enfeite em vez de imprimir os códigos crus.
 
 ### Verificado e não verificado
 

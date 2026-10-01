@@ -67,6 +67,16 @@ func (p *Prompt) Resolver(cfg config.Config) (config.Config, backend.Leilao, err
 			continue
 		}
 
+		if errors.Is(err, backend.ErrRotaDesconhecida) {
+			p.linha("")
+			p.aviso("O servidor respondeu, mas não conhece as rotas de transmissão.")
+			p.linha("     " + cinza(cfg.URLBase))
+			p.linha("     Provavelmente está numa versão anterior a este agente.")
+			p.linha("     Avise quem cuida do sistema, ou use --servidor para apontar")
+			p.linha("     para outro ambiente.")
+			return cfg, backend.Leilao{}, ErrCancelado
+		}
+
 		if err != nil {
 			// Validar a chave antes de comecar continua obrigatorio -- sem saber
 			// de que leilao ela e', nao da' para comecar com seguranca. Mas

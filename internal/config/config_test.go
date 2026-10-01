@@ -134,3 +134,54 @@ func TestSalvarNaoDeixaArquivoTemporario(t *testing.T) {
 		t.Error("o .tmp da escrita atomica sobrou no disco")
 	}
 }
+
+// TestPrimeiraExecucaoTemURLBase cobre o bug que foi para producao: `Carregar`
+// devolvia `Config{}` cru junto com ErrSemConfig, e o agente tentava
+// `GET /api/transmissao/leilao` sem host -- "unsupported protocol scheme".
+//
+// Nenhum teste pegava porque todos passavam URLBase explicito, e os testes
+// ponta a ponta sempre usavam --servidor. O caminho mais comum de todos
+// (usuario novo dando dois cliques no .exe) nao era exercitado.
+func TestPrimeiraExecucaoTemURLBase(t *testing.T) {
+	isolar(t)
+
+	cfg, err := Carregar()
+
+	if !errors.Is(err, ErrSemConfig) {
+		t.Fatalf("esperava ErrSemConfig, veio %v", err)
+	}
+	if cfg.URLBase != URLPadrao {
+		t.Errorf("URLBase na primeira execucao: %q (esperava %q)", cfg.URLBase, URLPadrao)
+	}
+	if cfg.VMixTitle == "" || len(cfg.VMixCampos) == 0 {
+		t.Errorf("defaults do vMix nao foram aplicados: %+v", cfg)
+	}
+}
+
+func TestConfigCorrompidaTambemTemURLBase(t *testing.T) {
+	isolar(t)
+
+	caminho, _ := Caminho()
+	_ = os.MkdirAll(filepath.Dir(caminho), permPasta)
+	_ = os.WriteFile(caminho, []byte("{nao e json"), permArq)
+
+	cfg, err := Carregar()
+
+	if !errors.Is(err, ErrSemConfig) {
+		t.Fatalf("esperava ErrSemConfig, veio %v", err)
+	}
+	if cfg.URLBase == "" {
+		t.Error("URLBase vazia depois de config corrompida")
+	}
+}
+
+func TestPadraoEhUtilizavel(t *testing.T) {
+	cfg := Padrao()
+
+	if cfg.URLBase == "" {
+		t.Error("URLBase vazia")
+	}
+	if cfg.TemChave() {
+		t.Error("Padrao nao devia ter chave")
+	}
+}

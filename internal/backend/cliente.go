@@ -21,6 +21,13 @@ import (
 // quem a recebe apaga a credencial do disco e pede uma nova.
 var ErrChaveRecusada = errors.New("chave de transmissao recusada")
 
+// ErrRotaDesconhecida e' 404 nas rotas de transmissao.
+//
+// Separado porque a causa quase sempre e' uma so: o backend esta numa versao
+// anterior a estas rotas. Dizer "nao consegui falar com o servidor" nesse caso
+// seria enganoso -- ele falou, e foi respondido.
+var ErrRotaDesconhecida = errors.New("o servidor nao conhece as rotas de transmissao")
+
 // Timeout curto de proposito: o laco roda a cada ~3s e o backend responde em
 // milissegundos. Esperar 30s por uma resposta so atrasaria o ciclo seguinte.
 const timeoutPadrao = 10 * time.Second
@@ -137,6 +144,10 @@ func (c *Cliente) requisitar(metodo, rota string, payload any) (json.RawMessage,
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		return nil, ErrChaveRecusada
+	}
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrRotaDesconhecida
 	}
 
 	var env envelope

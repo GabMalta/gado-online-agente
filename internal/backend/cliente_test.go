@@ -149,3 +149,19 @@ func TestLiberarPistaChamaARotaCerta(t *testing.T) {
 		t.Errorf("chamada errada: %s %s", metodo, rota)
 	}
 }
+
+func Test404ViraErroTipadoEnaoMensagemDeRedeFalsa(t *testing.T) {
+	// Backend mais antigo que o agente: a rota nao existe. Dizer "nao consegui
+	// falar com o servidor" seria enganoso -- ele falou e foi respondido.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"detail":"Not Found"}`)
+	}))
+	defer srv.Close()
+
+	_, err := NovoCliente(srv.URL, "k").BuscarLeilao()
+
+	if !errors.Is(err, ErrRotaDesconhecida) {
+		t.Fatalf("esperava ErrRotaDesconhecida, veio %v", err)
+	}
+}

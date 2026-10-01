@@ -1,0 +1,176 @@
+// Package config guarda a credencial do agente no disco.
+//
+// A chave NAO fica ao lado do executavel: o .exe vai ser copiado de maquina em
+// maquina e a credencial nao pode viajar junto. Ela mora no diretorio de
+// configuracao do usuario -- %APPDATA% no Windows, ~/.config no Linux.
+package config
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// URLPadrao e' sobrescrita em build com -ldflags para apontar para homologacao.
+var URLPadrao = "https://backend.gadoonline.com.br"
+
+const (
+	pastaApp  = "GadoOnline"
+	nomeArq   = "agente.json"
+	permPasta = 0o700
+	permArq   = 0o600
+)
+
+// Config e' o que persiste entre execucoes.
+//
+// Uma chave, nao uma lista: lista de chaves antigas em disco e' pilha de
+// credencial revogada, passivo e nao conveniencia. No leilao seguinte o
+// operador cola a nova e ela sobrescreve.
+type Config struct {
+	Chave   string `json:"chave"`
+	URLBase string `json:"url_base"`
+
+	// Nome do input de Title no vMix e dos campos dentro dele. Vem da config e
+	// nao hardcoded: renomear um Title no vMix nao pode quebrar o ingest em
+	// silencio -- o operador troca aqui e o agente volta a achar.
+	VMixTitle  string            `json:"vmix_title,omitempty"`
+	VMixCampos map[string]string `json:"vmix_campos,omitempty"`
+
+	// OBS: nome de cada source de texto por campo do payload.
+	OBSEndereco string            `json:"obs_endereco,omitempty"`
+	OBSSenha    string            `json:"obs_senha,omitempty"`
+	OBSCampos   map[string]string `json:"obs_campos,omitempty"`
+}
+
+// ErrSemConfig indica que ainda nao existe arquivo -- primeira execucao.
+var ErrSemConfig = errors.New("config: nenhuma configuracao salva")
+
+// Caminho devolve o arquivo de config do usuario atual.
+func Caminho() (string, error) {
+	base, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, pastaApp, nomeArq), nil
+}
+
+// Carregar le a config do disco. Devolve ErrSemConfig na primeira execucao.
+func Carregar() (Config, error) {
+	caminho, err := Caminho()
+	if err != nil {
+		return Config{}, err
+	}
+
+	bruto, err := os.ReadFile(caminho)
+	if errors.Is(err, os.ErrNotExist) {
+		return Config{}, ErrSemConfig
+	}
+	if err != nil {
+		return Config{}, err
+	}
+
+	var cfg Config
+	if err := json.Unmarshal(bruto, &cfg); err != nil {
+		// Arquivo corrompido nao pode travar o agente as 19h de um sabado:
+		// trata como primeira execucao e pede a chave de novo.
+		return Config{}, ErrSemConfig
+	}
+
+	cfg.aplicarPadroes()
+	return cfg, nil
+}
+
+// Salvar grava a config com permissao restrita ao usuario.
+func Salvar(cfg Config) error {
+	caminho, err := Caminho()
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(caminho), permPasta); err != nil {
+		return err
+	}
+
+	cfg.aplicarPadroes()
+
+	bruto, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	// Escreve em arquivo temporario e renomeia: queda de luz no meio da
+	// gravacao nao deixa uma config meio escrita.
+	tmp := caminho + ".tmp"
+	if err := os.WriteFile(tmp, bruto, permArq); err != nil {
+		return err
+	}
+	return os.Rename(tmp, caminho)
+}
+
+// EsquecerChave apaga a credencial mantendo o resto da config.
+//
+// Chamado quando o backend devolve 401: credencial revogada nao tem motivo
+// para continuar no disco.
+func EsquecerChave() error {
+	cfg, err := Carregar()
+	if errors.Is(err, ErrSemConfig) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+
+	cfg.Chave = ""
+	return Salvar(cfg)
+}
+
+// TemChave diz se ha credencial utilizavel.
+func (c Config) TemChave() bool {
+	return strings.TrimSpace(c.Chave) != ""
+}
+
+func (c *Config) aplicarPadroes() {
+	c.Chave = strings.TrimSpace(c.Chave)
+	c.URLBase = strings.TrimRight(strings.TrimSpace(c.URLBase), "/")
+
+	if c.URLBase == "" {
+		c.URLBase = URLPadrao
+	}
+	if c.VMixTitle == "" {
+		c.VMixTitle = "pista"
+	}
+	if len(c.VMixCampos) == 0 {
+		c.VMixCampos = CamposPadraoVMix()
+	}
+	if c.OBSEndereco == "" {
+		c.OBSEndereco = "localhost:4455"
+	}
+	if len(c.OBSCampos) == 0 {
+		c.OBSCampos = CamposPadraoOBS()
+	}
+}
+
+// CamposPadraoVMix mapeia campo do payload -> nome do campo de texto no Title.
+func CamposPadraoVMix() map[string]string {
+	return map[string]string{
+		"lote":        "Lote.Text",
+		"valor":       "Valor.Text",
+		"obs":         "Obs.Text",
+		"qtd_animais": "Qtd.Text",
+		"raca":        "Raca.Text",
+		"sexo":        "Sexo.Text",
+		"idade":       "Idade.Text",
+		"peso":        "Peso.Text",
+	}
+}
+
+// CamposPadraoOBS mapeia campo do payload -> nome do source de texto no OBS.
+func CamposPadraoOBS() map[string]string {
+	return map[string]string{
+		"lote":  "Lote",
+		"valor": "Valor",
+		"obs":   "Obs",
+	}
+}

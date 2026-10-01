@@ -201,6 +201,69 @@ o site não fica preso num lote antigo.
 
 ---
 
+## Testar sem vMix e sem OBS
+
+`--simular` troca a leitura do overlay por um arquivo JSON, **relido a cada
+ciclo**. Você edita no Notepad, salva, e a página pública acompanha em segundos.
+Serve para testar, demonstrar e treinar operador sem montar transmissão.
+
+**1. Crie o arquivo** (`C:\pista.json`):
+
+```json
+{ "lote": "001", "valor": "1850" }
+```
+
+**2. Rode apontando para ele:**
+
+```
+agente-gadoonline.exe --simular C:\pista.json --intervalo 1s
+```
+
+O `--intervalo 1s` deixa o retorno mais rápido enquanto você brinca. Em leilão de
+verdade o padrão de 3s é melhor.
+
+**3. Abra a página pública do leilão** e edite o arquivo para ver cada caso:
+
+| Salve isto | O que acontece na página |
+|---|---|
+| `{"lote":"001","valor":"1850"}` | lote 001 em pista, lance R$ 1.850,00, resto do catálogo |
+| `{"lote":"001","valor":"2000"}` | só o lance muda |
+| `{"lote":"001","valor":"2000","obs":"Reagrupado"}` | observação do overlay, com selo "informado na transmissão" |
+| `{"lote":"001","valor":"2000"}` | a observação **sai** — o payload é a tela inteira, não um acréscimo |
+| `{"lote":"9999","valor":"3200","qtd_animais":"7","sexo":"F","raca":"Girolando"}` | lote fora do catálogo, montado só com o que você digitou |
+| `{}` (ou apague o arquivo) | pista liberada, volta para "Aguardando próximo lote" |
+
+Campos aceitos: `lote` (obrigatório), `valor`, `qtd_animais`, `raca`, `sexo`
+(`"M"`/`"F"`), `idade`, `peso`, `obs`. **Todos em texto, entre aspas**, inclusive
+os numéricos.
+
+Deixar um campo de fora ou em branco é a mesma coisa: aquele dado volta a vir do
+catálogo. É assim que o operador desfaz algo digitado por engano.
+
+### Apontando para o seu Django local
+
+O servidor padrão é a produção. Para testar contra a sua máquina, rode o Django
+escutando em todas as interfaces (o Windows precisa alcançar o WSL):
+
+```bash
+python manage.py runserver 0.0.0.0:8899
+```
+
+E no Windows, com o IP do WSL (`hostname -I` no terminal do Ubuntu):
+
+```
+agente-gadoonline.exe --simular C:\pista.json --servidor http://172.x.x.x:8899
+```
+
+A chave tem que ser gerada **nesse** ambiente — chave da produção não vale no
+banco local, e vice-versa.
+
+> ⚠️ Se o agente disser **"O servidor respondeu, mas não conhece as rotas de
+> transmissão"**, o backend daquele endereço está numa versão anterior às rotas
+> `/api/transmissao/*`. É o caso da produção enquanto o backend não for mergeado.
+
+---
+
 ## Para quem desenvolve
 
 ```bash

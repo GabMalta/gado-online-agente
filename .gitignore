@@ -5,3 +5,6 @@ dist/
 # A credencial de verdade mora em %APPDATA%/~/.config, nunca no repo.
 agente.json
 estado*.json
+
+# Icone e metadados do .exe, gerados pelo `make recursos` a cada build.
+*.syso

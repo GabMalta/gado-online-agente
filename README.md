@@ -23,48 +23,42 @@ Não precisa instalar nada mais, não precisa de senha de administrador.
 
 ---
 
-## Primeira vez
+## Abrir o agente
 
-O agente pede a chave de transmissão:
-
-```
-  Nenhuma chave configurada.
-  Pegue a chave no dashboard: card do leilão → botão "Transmissão".
-
-  Cole a chave de transmissão e pressione Enter:
-  >
-```
-
-**Onde pegar a chave:** no sistema, na lista de leilões, no card do leilão de hoje,
-botão **Transmissão**. Copie a chave e cole aqui (Ctrl+V, ou clique com o botão
-direito no console).
-
-Ele confirma qual leilão é:
+Dois cliques no `.exe`. Ele pede o **mesmo usuário e senha do sistema**:
 
 ```
-  Chave salva aponta para:
-    LEILÃO REAL PRESENCIAL E VIRTUAL — 01/10/2026
-    90 lotes no catálogo
+  Gado Online — agente de transmissão
+  Servidor:      https://backend.gadoonline.com.br
+  Configuração:  C:\Users\voce\AppData\Roaming\GadoOnline\agente.json
 
-  [Enter] usar este leilão      [N] colar outra chave
+  Entre com o seu usuário do sistema.
+  Usuário: joao
+  Senha: ******
 ```
 
-Confere o nome e a data, e aperte Enter.
-
-## Nos leilões seguintes
-
-A chave fica salva, então ele já abre mostrando qual leilão ela aponta. **Cada leilão
-tem a sua própria chave**, então no próximo você aperta `N` e cola a nova.
-
-Se a chave salva for de um leilão antigo, ele avisa — e aí o Enter já pede a chave
-nova:
+Depois, tudo se escolhe com as **setas ↑ ↓** e **Enter**:
 
 ```
-  ⚠  Esse leilão é de 04/08/2026 (há 58 dias).
-     Você provavelmente precisa da chave do leilão de hoje.
+  Qual programa de transmissão?
+  ▶ vMix
+    OBS
 
-  [Enter] colar nova chave      [U] usar este leilão mesmo assim
+  Qual leilão?
+  ▶ LEILÃO REAL PRESENCIAL E VIRTUAL — 06/10/2026 — Em andamento — 90 lotes
+    LEILÃO DE PRIMAVERA — 20/10/2026 — Aguardando — 45 lotes
 ```
+
+Só aparecem os leilões **aguardando** ou **em andamento** da sua empresa. Se não
+aparecer nenhum, cadastre o leilão (ou ajuste o status) no sistema e escolha
+**Atualizar a lista**.
+
+Da próxima vez, o usuário já vem preenchido e o menu abre no programa da última vez.
+A senha **não** fica salva.
+
+> **Não precisa mais colar chave.** O agente usa a chave de transmissão que já
+> existe para o leilão, e só gera uma se ainda não houver. Ele nunca gera uma
+> nova por cima: isso derrubaria a URL do overlay que já está no vMix/OBS.
 
 ## Durante o leilão
 
@@ -134,18 +128,57 @@ O agente lê **o que está na tela**, não o que a Data Source mandou. Então:
 
 ## Configurar o OBS
 
+### 1. Deixar o agente ler o OBS
+
 1. **Ferramentas → Configurações do Servidor WebSocket** → marque **Ativar**.
 2. Anote a porta (padrão `4455`) e a senha.
-3. Abra o agente com `--obs`.
+3. Abra o agente e escolha **OBS** no menu.
 
-Ele lê os sources de texto chamados `Lote`, `Valor` e `Obs`.
+Ele lê os sources de **texto** chamados `Lote`, `Valor` e `Obs`. Se a sua senha não
+for vazia ou a porta for outra, ajuste em [Mudar a configuração](#mudar-a-configuração).
+
+### 2. Catálogo automático (acaba com a planilha)
+
+O OBS não tem Data Source como o vMix. No lugar dela, um **Browser Source** mostra
+o lote em pista já montado com os dados do catálogo — você digita só o número.
+
+1. **Fontes → + → Navegador**.
+2. URL: a que aparece na tela **Transmissão** do sistema, em *"Overlay para o
+   Browser Source do OBS"* (já vem com a chave).
+3. Largura e altura **iguais ao seu canvas** (normalmente 1920 × 1080), e deixe a
+   fonte posicionada em 0,0 — o card se ancora sozinho no canto inferior esquerdo.
+4. Deixe **"Desligar a fonte quando não estiver visível" desmarcado**: com ela
+   marcada o OBS recarrega a página a cada troca de cena.
+
+O card aparece quando você digita o número no source de texto `Lote`, e some
+quando a pista é liberada. **Entre um lote e outro a página não desenha nada** —
+nenhuma tarja fica no ar.
+
+Para ajustar o tamanho, acrescente `?escala=1.25` ao fim da URL (de `0.5` a `3`).
+Redimensionar a fonte pelo OBS borra o texto; a escala na URL desenha no tamanho
+certo.
+
+> **Não é o mesmo endereço do catálogo do vMix.** Aquele (`overlay.xml`) é XML cru
+> e num Browser Source aparece como um amontoado de texto. No OBS use a URL do
+> overlay.
+
+### Por que você continua digitando o número
+
+O source de texto `Lote` é a **entrada** (o agente lê o que você digita) e o
+Browser Source é a **saída** (o card completo que volta do catálogo). São duas
+coisas diferentes na cena: o `Lote` pode ficar fora do enquadramento, ou numa cena
+que não vai ao ar.
+
+Como no vMix, você continua podendo digitar por cima: `Valor` e `Obs` entram no
+card, e um número que não está no catálogo aparece marcado como "fora do catálogo".
 
 ---
 
 ## Mudar a configuração
 
-O arquivo fica em `%APPDATA%\GadoOnline\agente.json`. Cole isso na barra de endereço
-do Explorer para chegar lá:
+O caminho do arquivo aparece na tela de abertura do agente (`Configuração:`). Ele
+fica em `%APPDATA%\GadoOnline\agente.json`; cole isso na barra de endereço do
+Explorer para chegar lá:
 
 ```
 %APPDATA%\GadoOnline
@@ -153,8 +186,9 @@ do Explorer para chegar lá:
 
 ```json
 {
-  "chave": "...",
   "url_base": "https://backend.gadoonline.com.br",
+  "usuario": "joao",
+  "software": "vmix",
   "vmix_title": "pista",
   "vmix_campos": {
     "lote": "Lote.Text",
@@ -167,11 +201,16 @@ do Explorer para chegar lá:
 }
 ```
 
+`url_base` é o servidor para onde o agente manda tudo (login, leilões e pista).
+Troque o domínio aqui para apontar para outro ambiente; salve e abra o agente de
+novo — o endereço novo aparece em `Servidor:` na abertura.
+
 Em `vmix_campos`, o lado esquerdo é fixo e o direito é o nome no seu Title. Também
 aceita o número da camada (`"lote": "0"`) quando as camadas não têm nome.
 
-> A chave **não** fica junto do `.exe` de propósito: assim você pode copiar o
-> programa para outra máquina sem levar a credencial junto.
+> Nenhuma senha ou chave fica salva aqui: o agente pede o login a cada abertura e
+> busca a chave no servidor. O arquivo também **não** fica junto do `.exe`, então dá
+> para copiar o programa para outra máquina sem levar nada junto.
 
 ---
 
@@ -182,8 +221,12 @@ aceita o número da camada (`"lote": "0"`) quando as camadas não têm nome.
 | `vMix ● sem contato` | Web Controller desligada, ou vMix fechado | Settings → Web Controller → Enable |
 | `Servidor ● sem contato` | internet caiu | Ele tenta sozinho; a transmissão continua normal |
 | `pista livre` com lote no ar | o agente não achou o campo do lote | Confira o nome do Title e dos campos |
-| `A chave foi recusada` | chave revogada, ou de outro leilão | Pegue a chave atual no sistema |
-| Site mostra outro lote | chave de outro leilão | Reabra o agente e confira o nome do leilão |
+| `Usuário ou senha inválidos` | login errado | O mesmo usuário e senha do sistema |
+| `Nenhum leilão aguardando ou em andamento` | o leilão está finalizado/fechado, ou ainda não foi cadastrado | Ajuste no sistema e escolha **Atualizar a lista** |
+| `A chave foi recusada` | alguém gerou chave nova ou revogou a chave no sistema | Feche e abra o agente de novo |
+| Browser Source dizendo "Overlay sem leilão" | a chave da URL foi revogada ou é de outro leilão | Pegue a URL atual na tela Transmissão |
+| Browser Source com tarja preta e texto cru | é a URL do catálogo do vMix (`overlay.xml`) | Use a URL do overlay, não a do XML |
+| Site mostra outro lote | escolheu o leilão errado no menu | Reabra o agente e escolha o leilão certo |
 
 Se o agente fechar sem você mandar, **a pista se libera sozinha em até 2 minutos** —
 o site não fica preso num lote antigo.
@@ -194,7 +237,6 @@ o site não fica preso num lote antigo.
 
 ```
 --simular arquivo.json    lê de um arquivo em vez do vMix/OBS (testes e demonstração)
---obs                     lê do OBS em vez do vMix
 --servidor URL            outro servidor (homologação)
 --intervalo 3s            intervalo entre leituras
 ```

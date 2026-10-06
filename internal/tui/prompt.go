@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -20,174 +21,302 @@ var ErrCancelado = errors.New("cancelado pelo operador")
 // abertura. Curto o bastante para o operador nao achar que travou.
 var esperaEntreTentativas = 5 * time.Second
 
-// Prompt conduz o fluxo de abertura.
+// Prompt conduz o fluxo de abertura: login, software e leilao.
 type Prompt struct {
 	Entrada io.Reader
 	Saida   io.Writer
 
 	// NovoCliente e' injetado para o teste nao precisar de rede real.
-	NovoCliente func(urlBase, chave string) ClienteLeilao
+	NovoCliente func(urlBase string) ClienteAbertura
 
-	// Hoje e' injetavel para testar o aviso de leilao antigo.
-	Hoje func() time.Time
+	leitor *bufio.Reader
 }
 
-// ClienteLeilao e' o que o prompt precisa do backend.
-type ClienteLeilao interface {
-	BuscarLeilao() (backend.Leilao, error)
+// ClienteAbertura e' o que o prompt precisa do backend.
+type ClienteAbertura interface {
+	Entrar(usuario, senha string) error
+	ListarLeiloesAtivos() ([]backend.Leilao, error)
+	ObterChave(leilaoID string) (string, error)
 }
 
-// Resolver devolve a config pronta para uso, com chave validada contra o
-// backend e confirmada pelo operador.
+// Abertura e' o resultado do prompt: o que o laco precisa para comecar.
+type Abertura struct {
+	Leilao   backend.Leilao
+	Chave    string
+	Software string
+}
+
+var softwares = []struct{ codigo, nome string }{
+	{config.SoftwareVMix, "vMix"},
+	{config.SoftwareOBS, "OBS"},
+}
+
+// Resolver pede o login, o software e o leilao, e devolve a chave de
+// transmissao do leilao escolhido.
 //
-// Tres caminhos: sem chave salva, chave de leilao de hoje, e chave de leilao
-// antigo. O terceiro e' o que existe porque `criar_chave` so revoga as chaves
-// do *mesmo* leilao: a credencial do mes passado continua valida, e sem aviso o
-// operador passaria o leilao de hoje alimentando a pagina de agosto.
-func (p *Prompt) Resolver(cfg config.Config) (config.Config, backend.Leilao, error) {
-	leitor := bufio.NewReader(p.Entrada)
+// O operador abre o agente com dois cliques no .exe: nao ha flag nem chave
+// para colar. Tudo se escolhe com as setas e Enter.
+func (p *Prompt) Resolver(cfg config.Config) (config.Config, Abertura, error) {
+	p.leitor = bufio.NewReader(p.Entrada)
+	cliente := p.NovoCliente(cfg.URLBase)
+
+	p.linha("")
+	p.linha("  " + forte("Gado Online — agente de transmissão"))
+
+	// O servidor e o arquivo na tela: trocar o dominio (homologacao, servidor
+	// novo) e' editar `url_base` nesse arquivo, e o operador nao tem como
+	// adivinhar onde fica o %APPDATA%.
+	p.linha("  " + cinza("Servidor:      "+cfg.URLBase))
+	if caminho, err := config.Caminho(); err == nil {
+		p.linha("  " + cinza("Configuração:  "+caminho))
+	}
+
+	usuario, err := p.entrar(cliente, cfg.Usuario)
+	if err != nil {
+		return cfg, Abertura{}, err
+	}
+
+	software, err := p.escolherSoftware(cfg.Software)
+	if err != nil {
+		return cfg, Abertura{}, err
+	}
+
+	leilao, err := p.escolherLeilao(cliente)
+	if err != nil {
+		return cfg, Abertura{}, err
+	}
+
+	var chave string
+	err = p.insistir(cfg.URLBase, func() (err error) {
+		chave, err = cliente.ObterChave(leilao.ID)
+		return err
+	})
+	if err != nil {
+		return cfg, Abertura{}, err
+	}
+
+	cfg.Usuario = usuario
+	cfg.Software = software
+	if err := config.Salvar(cfg); err != nil {
+		p.aviso("não consegui salvar a configuração: " + err.Error())
+	}
+
+	return cfg, Abertura{Leilao: leilao, Chave: chave, Software: software}, nil
+}
+
+// entrar pede usuario e senha ate o login passar. Devolve o usuario usado.
+func (p *Prompt) entrar(cliente ClienteAbertura, ultimo string) (string, error) {
+	p.linha("")
+	p.linha("  Entre com o seu usuário do sistema.")
 
 	for {
-		if !cfg.TemChave() {
-			chave, err := p.pedirChave(leitor, "")
-			if err != nil {
-				return cfg, backend.Leilao{}, err
-			}
-			cfg.Chave = chave
+		digitado, err := p.lerCampo("Usuário", ultimo, false)
+		if err != nil {
+			return "", err
+		}
+		usuario := strings.TrimSpace(digitado)
+		// Na nova tentativa o usuario vem preenchido: quase sempre o erro foi
+		// na senha.
+		ultimo = usuario
+
+		senha, err := p.lerCampo("Senha", "", true)
+		if err != nil {
+			return "", err
 		}
 
-		leilao, err := p.NovoCliente(cfg.URLBase, cfg.Chave).BuscarLeilao()
-
-		if errors.Is(err, backend.ErrChaveRecusada) {
-			// Credencial revogada nao tem motivo para continuar no disco.
-			cfg.Chave = ""
-			_ = config.EsquecerChave()
-			p.linha("")
-			p.aviso("A chave salva não vale mais (foi revogada ou o leilão foi encerrado).")
+		if usuario == "" || senha == "" {
+			p.aviso("Preencha o usuário e a senha.")
 			continue
 		}
+
+		err = p.insistir("", func() error { return cliente.Entrar(usuario, senha) })
+		if errors.Is(err, backend.ErrLoginInvalido) {
+			p.aviso("Usuário ou senha inválidos. Tente de novo.")
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		return usuario, nil
+	}
+}
+
+func (p *Prompt) escolherSoftware(ultimo string) (string, error) {
+	nomes := make([]string, len(softwares))
+	inicial := 0
+	for i, software := range softwares {
+		nomes[i] = software.nome
+		if software.codigo == ultimo {
+			inicial = i
+		}
+	}
+
+	i, err := p.selecionar("Qual programa de transmissão?", nomes, inicial)
+	if err != nil {
+		return "", err
+	}
+	return softwares[i].codigo, nil
+}
+
+// escolherLeilao lista os leiloes aguardando ou em andamento da empresa.
+func (p *Prompt) escolherLeilao(cliente ClienteAbertura) (backend.Leilao, error) {
+	for {
+		var leiloes []backend.Leilao
+		err := p.insistir("", func() (err error) {
+			leiloes, err = cliente.ListarLeiloesAtivos()
+			return err
+		})
+		if err != nil {
+			return backend.Leilao{}, err
+		}
+
+		if len(leiloes) == 0 {
+			// Lista vazia nao fecha o agente: o operador pode estar criando o
+			// leilao no sistema agora, ou reabrindo um que ja tinha encerrado.
+			p.linha("")
+			p.aviso("Nenhum leilão aguardando ou em andamento.")
+			p.linha("     Cadastre o leilão no sistema (ou ajuste o status) e atualize.")
+
+			i, err := p.selecionar("O que fazer?", []string{"Atualizar a lista", "Sair"}, 0)
+			if err != nil {
+				return backend.Leilao{}, err
+			}
+			if i == 1 {
+				return backend.Leilao{}, ErrCancelado
+			}
+			continue
+		}
+
+		opcoes := make([]string, len(leiloes))
+		for i, leilao := range leiloes {
+			opcoes[i] = descreverLeilao(leilao)
+		}
+
+		i, err := p.selecionar("Qual leilão?", opcoes, 0)
+		if err != nil {
+			return backend.Leilao{}, err
+		}
+		return leiloes[i], nil
+	}
+}
+
+func descreverLeilao(leilao backend.Leilao) string {
+	status := "Aguardando"
+	if leilao.Status == backend.StatusEmAndamento {
+		status = "Em andamento"
+	}
+
+	lotes := fmt.Sprintf("%d lotes", leilao.TotalLotes)
+	if leilao.TotalLotes == 1 {
+		lotes = "1 lote"
+	}
+
+	return fmt.Sprintf("%s — %s — %s — %s",
+		leilao.Nome, formatarData(leilao.DataLeilao), status, lotes)
+}
+
+// insistir repete a acao enquanto o servidor nao responde.
+//
+// Desistir seria pior: na maquina de um parque de exposicoes a internet demora
+// a subir, e o operador ficaria clicando duas vezes no .exe de novo e de novo.
+// Entao insiste, dizendo o que esta acontecendo. Ctrl+C sai. Erro que o
+// servidor devolveu (senha errada, por exemplo) volta na hora.
+func (p *Prompt) insistir(urlBase string, acao func() error) error {
+	for {
+		err := acao()
 
 		if errors.Is(err, backend.ErrRotaDesconhecida) {
 			p.linha("")
 			p.aviso("O servidor respondeu, mas não conhece as rotas de transmissão.")
-			p.linha("     " + cinza(cfg.URLBase))
+			if urlBase != "" {
+				p.linha("     " + cinza(urlBase))
+			}
 			p.linha("     Provavelmente está numa versão anterior a este agente.")
-			p.linha("     Avise quem cuida do sistema, ou use --servidor para apontar")
-			p.linha("     para outro ambiente.")
-			return cfg, backend.Leilao{}, ErrCancelado
+			p.linha("     Avise quem cuida do sistema.")
+			return err
 		}
 
-		if err != nil {
-			// Validar a chave antes de comecar continua obrigatorio -- sem saber
-			// de que leilao ela e', nao da' para comecar com seguranca. Mas
-			// desistir seria pior: na maquina de um parque de exposicoes a
-			// internet demora a subir, e o operador ficaria clicando duas vezes
-			// no .exe de novo e de novo. Entao insiste, dizendo o que esta
-			// acontecendo. Ctrl+C sai.
-			p.linha("")
-			p.aviso("Não consegui falar com o servidor.")
-			p.linha("     " + cinza(err.Error()))
-			p.linha("     " + cinza(fmt.Sprintf("Tentando de novo em %s... (Ctrl+C para sair)", esperaEntreTentativas)))
-			time.Sleep(esperaEntreTentativas)
-			continue
+		var conexao *backend.ErroConexao
+		if !errors.As(err, &conexao) {
+			return err
 		}
 
-		confirmada, trocar, err := p.confirmar(leitor, leilao)
-		if err != nil {
-			return cfg, backend.Leilao{}, err
-		}
-
-		if trocar {
-			chave, err := p.pedirChave(leitor, "Cole a chave do leilão de hoje:")
-			if err != nil {
-				return cfg, backend.Leilao{}, err
-			}
-			cfg.Chave = chave
-			continue
-		}
-
-		if confirmada {
-			if err := config.Salvar(cfg); err != nil {
-				p.aviso("não consegui salvar a configuração: " + err.Error())
-			}
-			return cfg, leilao, nil
-		}
+		p.linha("")
+		p.aviso("Não consegui falar com o servidor.")
+		p.linha("     " + cinza(err.Error()))
+		p.linha("     " + cinza(fmt.Sprintf("Tentando de novo em %s... (Ctrl+C para sair)", esperaEntreTentativas)))
+		time.Sleep(esperaEntreTentativas)
 	}
 }
 
-func (p *Prompt) pedirChave(leitor *bufio.Reader, titulo string) (string, error) {
-	if titulo == "" {
-		titulo = "Nenhuma chave configurada."
-		p.linha("")
-		p.linha("  " + titulo)
-		p.linha("  Pegue a chave no dashboard: card do leilão → botão \"Transmissão\".")
-		titulo = "Cole a chave de transmissão e pressione Enter:"
-	}
+// lerCampo le uma linha de texto. `oculto` mostra asteriscos no lugar das
+// letras (senha); `inicial` vem preenchido e pode ser apagado.
+func (p *Prompt) lerCampo(rotulo, inicial string, oculto bool) (string, error) {
+	restaurar, cru := p.modoCru()
+	if !cru {
+		// Sem terminal nao da para esconder a senha nem pre-preencher: o padrao
+		// aparece entre colchetes e Enter vazio fica com ele.
+		if inicial != "" {
+			p.escrever(fmt.Sprintf("  %s [%s]: ", rotulo, inicial))
+		} else {
+			p.escrever("  " + rotulo + ": ")
+		}
 
-	p.linha("")
-	p.linha("  " + titulo)
-	p.escrever("  > ")
-
-	linha, err := leitor.ReadString('\n')
-	chave := strings.TrimSpace(linha)
-
-	if chave == "" {
+		texto, err := ler(p.leitor)
 		if err != nil {
+			return "", err
+		}
+		if texto == "" {
+			texto = inicial
+		}
+		return texto, nil
+	}
+	defer restaurar()
+
+	texto := []rune(inicial)
+	p.escrever("  " + rotulo + ": " + mascarar(string(texto), oculto))
+
+	for {
+		ev, err := lerTecla(p.leitor)
+		if err != nil {
+			p.linha("")
 			return "", ErrCancelado
 		}
-		return "", errors.New("chave vazia")
+
+		switch ev.tecla {
+		case teclaEnter:
+			p.linha("")
+			return string(texto), nil
+		case teclaCancelar:
+			p.linha("")
+			return "", ErrCancelado
+		case teclaApagar:
+			if len(texto) > 0 {
+				texto = texto[:len(texto)-1]
+				p.escrever("\b \b")
+			}
+		case teclaTexto:
+			texto = append(texto, ev.letra)
+			p.escrever(mascarar(string(ev.letra), oculto))
+		}
 	}
-	return chave, nil
 }
 
-// confirmar mostra o leilao da chave e devolve (usar, trocar, erro).
-func (p *Prompt) confirmar(leitor *bufio.Reader, leilao backend.Leilao) (bool, bool, error) {
-	dias, conhecida := diasAtras(leilao.DataLeilao, p.agora())
-
-	p.linha("")
-	p.linha("  Chave salva aponta para:")
-	p.linha("    " + leilao.Nome + " — " + formatarData(leilao.DataLeilao))
-	p.linha(fmt.Sprintf("    %d lotes no catálogo", leilao.TotalLotes))
-
-	// Default invertido quando a data nao e' hoje: operador com pressa aperta
-	// Enter sem ler, e nos dois casos acerta.
-	ehDeHoje := conhecida && dias == 0
-
-	if !ehDeHoje {
-		p.linha("")
-		if conhecida {
-			p.aviso(fmt.Sprintf(
-				"Esse leilão é de %s (%s).", formatarData(leilao.DataLeilao), emPortugues(dias)))
-		} else {
-			p.aviso("Não consegui ler a data desse leilão.")
-		}
-		p.linha("     Você provavelmente precisa da chave do leilão de hoje.")
-		p.linha("")
-		p.linha("  [Enter] colar nova chave      [U] usar este leilão mesmo assim")
-		p.escrever("  > ")
-
-		resposta, err := ler(leitor)
-		if err != nil {
-			return false, false, err
-		}
-		if strings.EqualFold(resposta, "u") {
-			return true, false, nil
-		}
-		return false, true, nil
+func mascarar(texto string, oculto bool) string {
+	if !oculto {
+		return texto
 	}
+	return strings.Repeat("*", len([]rune(texto)))
+}
 
-	p.linha("")
-	p.linha("  [Enter] usar este leilão      [N] colar outra chave")
-	p.escrever("  > ")
-
-	resposta, err := ler(leitor)
-	if err != nil {
-		return false, false, err
+// modoCru liga o modo cru quando a entrada e' o console de verdade. Entrada de
+// teste (strings.Reader) ou de pipe devolve ok=false.
+func (p *Prompt) modoCru() (func(), bool) {
+	arquivo, ok := p.Entrada.(*os.File)
+	if !ok {
+		return nil, false
 	}
-	if strings.EqualFold(resposta, "n") {
-		return false, true, nil
-	}
-	return true, false, nil
+	return entrarModoCru(arquivo)
 }
 
 func ler(leitor *bufio.Reader) (string, error) {
@@ -201,30 +330,12 @@ func ler(leitor *bufio.Reader) (string, error) {
 	return texto, nil
 }
 
-func (p *Prompt) agora() time.Time {
-	if p.Hoje != nil {
-		return p.Hoje()
-	}
-	return time.Now()
-}
-
 func (p *Prompt) linha(texto string) { fmt.Fprintln(p.Saida, texto) }
 
 func (p *Prompt) escrever(texto string) { fmt.Fprint(p.Saida, texto) }
 
 func (p *Prompt) aviso(texto string) {
 	fmt.Fprintln(p.Saida, "  "+amarelo("⚠  "+texto))
-}
-
-// diasAtras devolve quantos dias atras foi a data ISO, e se deu para ler.
-func diasAtras(dataISO string, agora time.Time) (int, bool) {
-	data, err := time.Parse("2006-01-02", dataISO)
-	if err != nil {
-		return 0, false
-	}
-
-	hoje := time.Date(agora.Year(), agora.Month(), agora.Day(), 0, 0, 0, 0, time.UTC)
-	return int(hoje.Sub(data).Hours() / 24), true
 }
 
 func formatarData(dataISO string) string {
@@ -235,15 +346,14 @@ func formatarData(dataISO string) string {
 	return data.Format("02/01/2006")
 }
 
-func emPortugues(dias int) string {
-	switch {
-	case dias == 1:
-		return "há 1 dia"
-	case dias > 1:
-		return fmt.Sprintf("há %d dias", dias)
-	case dias == -1:
-		return "amanhã"
-	default:
-		return fmt.Sprintf("em %d dias", -dias)
+// PausarAoSair segura a janela aberta quando o agente foi aberto com dois
+// cliques. Sem isso, um erro na abertura fecha o console antes de o operador
+// conseguir ler a mensagem.
+func PausarAoSair(entrada io.Reader, saida io.Writer) {
+	if !pausarAoSair() {
+		return
 	}
+	fmt.Fprintln(saida, "")
+	fmt.Fprint(saida, "  Pressione Enter para fechar.")
+	_, _ = bufio.NewReader(entrada).ReadString('\n')
 }

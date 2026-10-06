@@ -1,8 +1,10 @@
-// Package config guarda a credencial do agente no disco.
+// Package config guarda as preferencias do agente no disco.
 //
-// A chave NAO fica ao lado do executavel: o .exe vai ser copiado de maquina em
-// maquina e a credencial nao pode viajar junto. Ela mora no diretorio de
-// configuracao do usuario -- %APPDATA% no Windows, ~/.config no Linux.
+// Nenhuma credencial fica aqui: a senha e o token de usuario vivem so em
+// memoria, e a chave de transmissao e' buscada no servidor a cada abertura. O
+// arquivo mora no diretorio de configuracao do usuario -- %APPDATA% no
+// Windows, ~/.config no Linux -- e nao ao lado do executavel, que e' copiado
+// de maquina em maquina.
 package config
 
 import (
@@ -23,14 +25,21 @@ const (
 	permArq   = 0o600
 )
 
+// Software de transmissao que o agente le.
+const (
+	SoftwareVMix = "vmix"
+	SoftwareOBS  = "obs"
+)
+
 // Config e' o que persiste entre execucoes.
 //
-// Uma chave, nao uma lista: lista de chaves antigas em disco e' pilha de
-// credencial revogada, passivo e nao conveniencia. No leilao seguinte o
-// operador cola a nova e ela sobrescreve.
+// `Usuario` e `Software` sao so conveniencia: o login vem preenchido e o menu
+// abre no software da ultima vez. Config antiga com `chave` salva perde o
+// campo na proxima gravacao -- credencial nao fica mais em disco.
 type Config struct {
-	Chave   string `json:"chave"`
-	URLBase string `json:"url_base"`
+	URLBase  string `json:"url_base"`
+	Usuario  string `json:"usuario,omitempty"`
+	Software string `json:"software,omitempty"`
 
 	// Nome do input de Title no vMix e dos campos dentro dele. Vem da config e
 	// nao hardcoded: renomear um Title no vMix nao pode quebrar o ingest em
@@ -89,7 +98,7 @@ func Carregar() (Config, error) {
 	var cfg Config
 	if err := json.Unmarshal(bruto, &cfg); err != nil {
 		// Arquivo corrompido nao pode travar o agente as 19h de um sabado:
-		// trata como primeira execucao e pede a chave de novo.
+		// trata como primeira execucao.
 		return Padrao(), ErrSemConfig
 	}
 
@@ -124,34 +133,15 @@ func Salvar(cfg Config) error {
 	return os.Rename(tmp, caminho)
 }
 
-// EsquecerChave apaga a credencial mantendo o resto da config.
-//
-// Chamado quando o backend devolve 401: credencial revogada nao tem motivo
-// para continuar no disco.
-func EsquecerChave() error {
-	cfg, err := Carregar()
-	if errors.Is(err, ErrSemConfig) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-
-	cfg.Chave = ""
-	return Salvar(cfg)
-}
-
-// TemChave diz se ha credencial utilizavel.
-func (c Config) TemChave() bool {
-	return strings.TrimSpace(c.Chave) != ""
-}
-
 func (c *Config) aplicarPadroes() {
-	c.Chave = strings.TrimSpace(c.Chave)
+	c.Usuario = strings.TrimSpace(c.Usuario)
 	c.URLBase = strings.TrimRight(strings.TrimSpace(c.URLBase), "/")
 
 	if c.URLBase == "" {
 		c.URLBase = URLPadrao
+	}
+	if c.Software != SoftwareVMix && c.Software != SoftwareOBS {
+		c.Software = ""
 	}
 	if c.VMixTitle == "" {
 		c.VMixTitle = "pista"

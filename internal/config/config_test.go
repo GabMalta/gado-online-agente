@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -27,7 +28,7 @@ func TestCarregarSemArquivoDevolveErrSemConfig(t *testing.T) {
 func TestSalvarECarregar(t *testing.T) {
 	isolar(t)
 
-	if err := Salvar(Config{Chave: "  abc123  ", URLBase: "http://localhost:8899/"}); err != nil {
+	if err := Salvar(Config{Usuario: "  joao  ", Software: SoftwareOBS, URLBase: "http://localhost:8899/"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -36,22 +37,22 @@ func TestSalvarECarregar(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if cfg.Chave != "abc123" {
-		t.Errorf("chave nao foi trimada: %q", cfg.Chave)
+	if cfg.Usuario != "joao" {
+		t.Errorf("usuario nao foi trimado: %q", cfg.Usuario)
+	}
+	if cfg.Software != SoftwareOBS {
+		t.Errorf("software nao foi salvo: %q", cfg.Software)
 	}
 	// Barra no fim viraria //api/... nas requisicoes.
 	if cfg.URLBase != "http://localhost:8899" {
 		t.Errorf("barra final nao foi removida: %q", cfg.URLBase)
-	}
-	if !cfg.TemChave() {
-		t.Error("TemChave devia ser true")
 	}
 }
 
 func TestURLBaseVaziaCaiNoPadrao(t *testing.T) {
 	isolar(t)
 
-	if err := Salvar(Config{Chave: "abc"}); err != nil {
+	if err := Salvar(Config{Usuario: "joao"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -64,7 +65,7 @@ func TestURLBaseVaziaCaiNoPadrao(t *testing.T) {
 func TestCamposPadraoSaoPreenchidos(t *testing.T) {
 	isolar(t)
 
-	_ = Salvar(Config{Chave: "abc"})
+	_ = Salvar(Config{Usuario: "joao"})
 	cfg, _ := Carregar()
 
 	if cfg.VMixCampos["lote"] == "" {
@@ -75,32 +76,38 @@ func TestCamposPadraoSaoPreenchidos(t *testing.T) {
 	}
 }
 
-func TestEsquecerChaveMantemORestoDaConfig(t *testing.T) {
+func TestSoftwareDesconhecidoCaiNoMenuSemPreSelecao(t *testing.T) {
 	isolar(t)
 
-	_ = Salvar(Config{Chave: "abc", URLBase: "http://x", VMixTitle: "meu-title"})
+	_ = Salvar(Config{Software: "wirecast"})
+	cfg, _ := Carregar()
 
-	if err := EsquecerChave(); err != nil {
-		t.Fatal(err)
+	if cfg.Software != "" {
+		t.Errorf("software invalido devia virar vazio, veio %q", cfg.Software)
 	}
+}
+
+func TestConfigAntigaComChaveNaoGuardaMaisACredencial(t *testing.T) {
+	isolar(t)
+
+	caminho, _ := Caminho()
+	_ = os.MkdirAll(filepath.Dir(caminho), permPasta)
+	_ = os.WriteFile(caminho, []byte(`{"chave":"antiga","url_base":"http://x","vmix_title":"meu-title"}`), permArq)
 
 	cfg, err := Carregar()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.TemChave() {
-		t.Error("a chave devia ter sido apagada")
-	}
 	if cfg.VMixTitle != "meu-title" {
 		t.Errorf("o resto da config foi perdido: %+v", cfg)
 	}
-}
+	if err := Salvar(cfg); err != nil {
+		t.Fatal(err)
+	}
 
-func TestEsquecerChaveSemConfigNaoFalha(t *testing.T) {
-	isolar(t)
-
-	if err := EsquecerChave(); err != nil {
-		t.Fatalf("devia ser no-op, veio %v", err)
+	bruto, _ := os.ReadFile(caminho)
+	if strings.Contains(string(bruto), "antiga") {
+		t.Errorf("a chave antiga continuou no disco:\n%s", bruto)
 	}
 }
 
@@ -115,8 +122,7 @@ func TestArquivoCorrompidoNaoTravaOAgente(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Tratado como primeira execucao: o agente pede a chave de novo em vez de
-	// morrer as 19h de um sabado.
+	// Tratado como primeira execucao em vez de morrer as 19h de um sabado.
 	if _, err := Carregar(); !errors.Is(err, ErrSemConfig) {
 		t.Fatalf("esperava ErrSemConfig, veio %v", err)
 	}
@@ -125,7 +131,7 @@ func TestArquivoCorrompidoNaoTravaOAgente(t *testing.T) {
 func TestSalvarNaoDeixaArquivoTemporario(t *testing.T) {
 	isolar(t)
 
-	if err := Salvar(Config{Chave: "abc"}); err != nil {
+	if err := Salvar(Config{Usuario: "joao"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -180,8 +186,5 @@ func TestPadraoEhUtilizavel(t *testing.T) {
 
 	if cfg.URLBase == "" {
 		t.Error("URLBase vazia")
-	}
-	if cfg.TemChave() {
-		t.Error("Padrao nao devia ter chave")
 	}
 }

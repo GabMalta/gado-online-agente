@@ -24,25 +24,28 @@ import (
 // versao e' preenchida no build com -ldflags "-X main.versao=1.0.0".
 var versao = "dev"
 
+// O operador abre o agente com dois cliques no .exe, entao nada aqui pode
+// depender de flag: login, programa de transmissao e leilao se escolhem no
+// console. As flags que sobraram sao de desenvolvimento.
 func main() {
 	simular := flag.String("simular", "",
 		"lê o estado de um arquivo JSON em vez do vMix/OBS (desenvolvimento e demonstração)")
-	usarOBS := flag.Bool("obs", false, "lê do OBS (obs-websocket) em vez do vMix")
 	servidor := flag.String("servidor", "", "URL do backend (sobrescreve a configuração salva)")
 	intervalo := flag.Duration("intervalo", laco.IntervaloPadrao,
 		"intervalo entre leituras do overlay")
 	flag.Parse()
 
-	if err := rodar(*simular, *usarOBS, *servidor, *intervalo); err != nil {
-		if errors.Is(err, tui.ErrCancelado) {
-			return
-		}
-		fmt.Fprintf(os.Stderr, "\nerro: %v\n", err)
-		os.Exit(1)
+	err := rodar(*simular, *servidor, *intervalo)
+	if err == nil || errors.Is(err, tui.ErrCancelado) {
+		return
 	}
+
+	fmt.Fprintf(os.Stderr, "\nerro: %v\n", err)
+	tui.PausarAoSair(os.Stdin, os.Stdout)
+	os.Exit(1)
 }
 
-func rodar(simular string, usarOBS bool, servidor string, intervalo time.Duration) error {
+func rodar(simular string, servidor string, intervalo time.Duration) error {
 	cfg, err := config.Carregar()
 	if err != nil && !errors.Is(err, config.ErrSemConfig) {
 		return err
@@ -54,17 +57,17 @@ func rodar(simular string, usarOBS bool, servidor string, intervalo time.Duratio
 	prompt := &tui.Prompt{
 		Entrada: os.Stdin,
 		Saida:   os.Stdout,
-		NovoCliente: func(urlBase, chave string) tui.ClienteLeilao {
-			return backend.NovoCliente(urlBase, chave)
+		NovoCliente: func(urlBase string) tui.ClienteAbertura {
+			return backend.NovoClienteUsuario(urlBase)
 		},
 	}
 
-	cfg, leilao, err := prompt.Resolver(cfg)
+	cfg, abertura, err := prompt.Resolver(cfg)
 	if err != nil {
 		return err
 	}
 
-	f, err := abrirFonte(cfg, simular, usarOBS)
+	f, err := abrirFonte(cfg, simular, abertura.Software)
 	if err != nil {
 		return err
 	}
@@ -75,11 +78,12 @@ func rodar(simular string, usarOBS bool, servidor string, intervalo time.Duratio
 		Versao:  versao,
 		Fonte:   f.Nome(),
 		Detalhe: f.Descricao(),
-		Leilao:  leilao.Nome,
+		Leilao:  abertura.Leilao.Nome,
 	}
 
 	fmt.Println()
-	ciclo := laco.Novo(f, backend.NovoCliente(cfg.URLBase, cfg.Chave), intervalo, status.Desenhar)
+	cliente := backend.NovoCliente(cfg.URLBase, abertura.Chave)
+	ciclo := laco.Novo(f, cliente, intervalo, status.Desenhar)
 
 	// Ctrl+C libera a pista antes de sair: o operador fechando o agente no fim
 	// do leilão não deve deixar o último lote anunciado esperando o TTL.
@@ -95,26 +99,24 @@ func rodar(simular string, usarOBS bool, servidor string, intervalo time.Duratio
 	erroLaco := ciclo.Rodar(parar)
 
 	if errors.Is(erroLaco, backend.ErrChaveRecusada) {
-		// Credencial revogada não tem motivo para continuar no disco.
-		_ = config.EsquecerChave()
-		status.Mensagem("")
-		status.Mensagem("  A chave de transmissão foi recusada pelo servidor.")
-		status.Mensagem("  Ela foi apagada; abra o agente de novo e cole a chave atual.")
-		return nil
+		// Alguem gerou chave nova ou revogou esta no sistema. Reabrir o agente
+		// busca a chave atual do leilao.
+		return errors.New("a chave de transmissão foi recusada pelo servidor " +
+			"(foi revogada no sistema?). Abra o agente de novo")
 	}
 	if erroLaco != nil {
 		return erroLaco
 	}
 
-	liberarNaSaida(cfg, status)
+	liberarNaSaida(cliente, status)
 	return nil
 }
 
-func abrirFonte(cfg config.Config, simular string, usarOBS bool) (fonte.Fonte, error) {
+func abrirFonte(cfg config.Config, simular string, software string) (fonte.Fonte, error) {
 	switch {
 	case simular != "":
 		return fonte.NovoSimulado(simular), nil
-	case usarOBS:
+	case software == config.SoftwareOBS:
 		return fonte.NovoOBS(cfg.OBSEndereco, cfg.OBSSenha, cfg.OBSCampos)
 	default:
 		return fonte.NovoVMix(cfg.VMixTitle, cfg.VMixCampos), nil
@@ -123,11 +125,10 @@ func abrirFonte(cfg config.Config, simular string, usarOBS bool) (fonte.Fonte, e
 
 // liberarNaSaida é cortesia, não garantia: se falhar, o TTL de 120s do backend
 // cobre. Por isso o erro só é informado, não propagado.
-func liberarNaSaida(cfg config.Config, status *tui.Status) {
+func liberarNaSaida(cliente *backend.Cliente, status *tui.Status) {
 	status.Mensagem("")
 	status.Mensagem("  Liberando a pista...")
 
-	cliente := backend.NovoCliente(cfg.URLBase, cfg.Chave)
 	if err := cliente.LiberarPista(); err != nil {
 		status.Mensagem("  Não consegui liberar a pista (" + err.Error() + ").")
 		status.Mensagem("  Ela expira sozinha em até 2 minutos.")

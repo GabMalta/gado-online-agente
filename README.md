@@ -177,7 +177,8 @@ card, e um número que não está no catálogo aparece marcado como "fora do cat
 ## Mudar a configuração
 
 O caminho do arquivo aparece na tela de abertura do agente (`Configuração:`). Ele
-fica em `%APPDATA%\GadoOnline\agente.json`; cole isso na barra de endereço do
+é criado com os valores padrão na primeira vez que o agente abre — antes mesmo do
+login, para dar para trocar o servidor logo de cara — e fica em `%APPDATA%\GadoOnline\agente.json`; cole isso na barra de endereço do
 Explorer para chegar lá:
 
 ```

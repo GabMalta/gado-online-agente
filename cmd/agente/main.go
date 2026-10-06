@@ -46,6 +46,10 @@ func main() {
 }
 
 func rodar(simular string, servidor string, intervalo time.Duration) error {
+	// Antes do `--servidor`: o arquivo nasce com o servidor padrao. Falhar aqui
+	// nao impede o agente de rodar com a config em memoria.
+	_ = config.CriarSeAusente()
+
 	cfg, err := config.Carregar()
 	if err != nil && !errors.Is(err, config.ErrSemConfig) {
 		return err

@@ -77,6 +77,25 @@ func Padrao() Config {
 	return cfg
 }
 
+// CriarSeAusente grava a config padrao quando ainda nao ha arquivo.
+//
+// Chamado na abertura: a tela mostra o caminho do arquivo, e quem precisa
+// trocar o `url_base` antes do primeiro login (homologacao, servidor novo) tem
+// que achar o arquivo la. Arquivo existente -- mesmo corrompido -- nao e'
+// tocado: sobrescrever um JSON com virgula errada apagaria a edicao do
+// operador sem aviso.
+func CriarSeAusente() error {
+	caminho, err := Caminho()
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(caminho); !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return Salvar(Padrao())
+}
+
 // Carregar le a config do disco.
 //
 // Devolve ErrSemConfig na primeira execucao -- e nesse caso devolve tambem a

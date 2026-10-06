@@ -188,3 +188,39 @@ func TestPadraoEhUtilizavel(t *testing.T) {
 		t.Error("URLBase vazia")
 	}
 }
+
+func TestCriarSeAusenteGravaOPadraoNaPrimeiraExecucao(t *testing.T) {
+	isolar(t)
+
+	if err := CriarSeAusente(); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Carregar()
+	if err != nil {
+		t.Fatalf("o arquivo devia existir depois de CriarSeAusente, veio %v", err)
+	}
+	if cfg.URLBase != URLPadrao {
+		t.Errorf("url_base devia ser o padrao, veio %q", cfg.URLBase)
+	}
+}
+
+func TestCriarSeAusenteNaoMexeEmArquivoExistente(t *testing.T) {
+	isolar(t)
+
+	caminho, _ := Caminho()
+	_ = os.MkdirAll(filepath.Dir(caminho), permPasta)
+
+	// Mesmo corrompido: e' a edicao do operador, com uma virgula errada.
+	original := []byte(`{"url_base": "https://homologacao.exemplo",}`)
+	_ = os.WriteFile(caminho, original, permArq)
+
+	if err := CriarSeAusente(); err != nil {
+		t.Fatal(err)
+	}
+
+	bruto, _ := os.ReadFile(caminho)
+	if string(bruto) != string(original) {
+		t.Errorf("o arquivo existente foi sobrescrito:\n%s", bruto)
+	}
+}
